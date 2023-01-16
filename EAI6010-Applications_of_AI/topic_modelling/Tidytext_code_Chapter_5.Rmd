@@ -1,0 +1,356 @@
+
+---
+title: "Text Mining using tidytext - Chapter 5"
+author: "Abhijit Sanyal"
+date: "11/05/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+#Invoke the required library packages
+library(ggplot2)
+library(tidytext)
+library(tidyverse)
+library(stm)
+library(topicmodels)
+library(stringr)
+library(gutenbergr)
+library(janitor)
+```
+
+# Text Analytics - Chapter 5 - Text Classification Models 
+
+## 5.1 Building Text Classification Models
+
+The goal of this exercise it to build classification models from text data. We donload two books from the gutenbergr collection and then convert our data into a numeric but sparse DTM or document term matrix. We then 
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+titles <- c("The War of the Worlds",
+            "Pride and Prejudice")
+books <- gutenberg_works(title %in% titles) %>%
+  gutenberg_download(meta_fields = "title") %>%
+  mutate(document = row_number())
+glimpse(books)
+
+#Making a tidy dataset
+library(tidytext)
+tidy_books <- books %>%
+  unnest_tokens(word, text) %>%
+  group_by(word) %>%
+  filter(n() > 10) %>%
+  ungroup
+glimpse(tidy_books)
+
+tabyl(tidy_books$title)
+```
+
+## 5.2 Preparing Training and Test Data Sets
+
+Let us create training and test data sets using the package `rsample`
+
+``` {r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+library(rsample)
+books_split <- tidy_books %>%
+  distinct(document) %>%
+  initial_split()
+train_data <- training(books_split)
+test_data <- testing(books_split)
+
+dim(train_data)
+# [1] 12039     1
+dim(test_data)
+# [1] 4012    1
+
+```
+We will next create the sparse matrix from the training data set using the 
+cast_sparse function
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+sparse_words <- tidy_books %>%
+  count(document, word, sort = TRUE) %>%
+  inner_join(train_data) %>%
+  cast_sparse(document, word, n)
+class(sparse_words)
+dim(sparse_words)
+# [1] 12039  1652
+# Which dimension of the sparse matrix is the number of features?
+# Feature = term = word
+
+# Looking at the sparse matrix
+sparse_words[1:10, 1:10]
+# 10 x 10 sparse Matrix of class "dgCMatrix"
+# [[ suppressing 10 column names ‘the’, ‘a’, ‘to’ ... ]]
+# 
+# 4532  5 . . . . 2 . . . .
+# 6450  . 5 . . . 1 . . . .
+# 14686 5 . . 1 . 3 . . . .
+# 15669 1 . 5 . . . . 1 . .
+# 1287  4 . . . . 1 . . . .
+# 1487  4 . . . . 3 . . . .
+# 1698  4 . . 1 . 1 . . . .
+# 1897  4 . . 1 . 1 . . . .
+# 2135  4 . . . . 1 . . . .
+# 2858  . . . 4 . . . . . .
+
+```
+
+The number of rows for the DTM matrix - sparse_words is 12039 - which is the 
+same as the number of rows of the training matrix
+The number of features is 1652
+
+If you want to use tf-idf instead of counts, should you calculate 
+tf-idf before or after splitting train and test?
+Using TF-IDF-vectors, that have been calculated with the entire corpus 
+(training and test subsets combined), while training the model might 
+introduce some data leakage and hence yield in too optimistic performance 
+measures. This is because the IDF-part of the training set's TF-IDF features will 
+then include information from the test set already.
+
+Calculating them completely separately for the training and test set is not a 
+good idea either. Besides testing the quality of your model then 
+you will be also testing the quality of your IDF-estimation. 
+As the test data set is usually small this will be a poor estimation 
+and will worsen your performance measures.
+
+Therefore I would suggest (analogously to the common mean imputation of 
+missing values) to perform TF-IDF-normalization on the training set 
+separately and then use the IDF-vector from the training 
+set to calculate the TF-IDF vectors of the test set.
+
+We need to build a data frame with the response variable to associate each of the 
+rownames() of the sparse matrix with a title - which is what we are going to
+predict in the model
+
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+word_rownames <- as.integer(rownames(sparse_words))
+class(word_rownames)
+# [1] "integer"
+
+books_joined <- tibble(document = word_rownames) %>%
+  left_join(books %>%
+              select(document, title))
+glimpse(books_joined)
+# Rows: 12,039
+# Columns: 2
+# $ document <int> 6450, 14686, 1264, 1287, 1487, 1698, 1897, 2135, 2858, 2930, …
+# $ title    <chr> "The War of the Worlds", "Pride and Prejudice", "The War of t…
+```
+
+## 5.3 Modeling
+
+Regularization constrains magnitude of coefficients
+LASSO performs feature selection and performs L1 regularization
+LASSO - least absolute shrinkage and selection operator
+Lasso regression is a type of linear regression that uses shrinkage. 
+Shrinkage is defined as when data values are shrunk towards a central point, 
+like the mean. 
+The L1 regularization adds a penalty equivalent to the absolute magnitude of regression coefficients and tries to minimize them. 
+The equation of lasso is similar to ridge regression and looks like as given below.
+LS Obj + $\lambda$ (sum of the absolute values of coefficients)
+
+Here the objective is as follows:
+
+* If $\lambda$ = 0, We get the same coefficients as linear regression
+
+* If $\lambda$ = vary large, All coefficients are shrunk towards zero
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+library(glmnet)
+library(doMC)
+# install.packages("doMC")
+registerDoMC(cores = 8)
+#Specify the dependent measure or the labeled "y" variable
+is_jane <- books_joined$title == "Pride and Prejudice"
+model <- cv.glmnet(sparse_words, is_jane, 
+                   family = "binomial", 
+                   parallel = TRUE, 
+                   keep = TRUE)
+
+plot(model)
+
+plot(model$glmnet.fit, label = TRUE)
+
+# We can also print out the progression of fit for the model with each iteration
+print(model$glmnet.fit)
+
+# Call:  glmnet(x = sparse_words, y = is_jane, parallel = TRUE, 
+#               family = "binomial") 
+#       Df  %Dev   Lambda
+# 1      0  0.00 0.139200
+# 2      1  1.15 0.126900
+# 3      1  2.09 0.115600
+# 4      2  2.96 0.105300
+# 5      3  4.22 0.095960
+# 6      3  5.64 0.087440
+# 7      3  6.88 0.079670
+# 8      3  7.97 0.072590
+# 9      5  9.33 0.066140
+# 10     5 10.74 0.060270
+# .......more rows
+# 94  1567 89.48 0.000024
+# 95  1569 89.51 0.000022
+# 96  1570 89.53 0.000020
+# 97  1567 89.55 0.000018
+# 98  1572 89.57 0.000017
+# 99  1571 89.59 0.000015
+# 100 1576 89.60 0.000014
+
+# We can also plot against the deviance explained and show the labels
+plot(model$glmnet.fit, xvar = "dev", label = TRUE)
+
+```
+
+Each curve in the above plot of `model$glmnet.fit` corresponds to a variable. It shows the path of its coefficient against the L1-norm of the whole coefficient vector at
+as $\lambda$ varies. The axis above indicates the number of nonzero coefficients
+at the current $\lambda$, which is the effective degrees of freedom (df) for the lasso.
+
+The command `print(model$glmnet.fit)` prints out the progression of fit for the 
+model with each iteration. It shows from left to right the number of nonzero coefficients (Df), the percent (of null) deviance explained (%dev) and the value of $\lambda$ (Lambda).
+Although by default glmnet calls for 100 values of lambda the program 
+stops early if `%dev%` does not change sufficently from one lambda 
+to the next (typically near the end of the path.)
+
+In the next sequence of code we tidy the data using the package `broom` and select the largest value of lambda such that the error is within 1 standard error of the minimum. We also pull the intercept which will be different for each word or term in the model.
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+# Tidy the data, and then filter to choose some lambda from the glmnet output
+
+library(broom)
+coefs <- model$glmnet.fit %>%
+  tidy() %>%
+  filter(lambda == model$lambda.1se)
+
+head(coefs)
+# # A tibble: 6 x 5
+# term         step   estimate lambda     dev.ratio
+# <chr>       <dbl>    <dbl>   <dbl>       <dbl>
+# 1 (Intercept)    51  0.238   0.00133     0.785
+# 2 a              51 -0.452   0.00133     0.785
+# 3 the            51 -0.542   0.00133     0.785
+# 4 and            51 -0.241   0.00133     0.785
+# 5 as             51  0.00528 0.00133     0.785
+# 6 ulla           51 -0.574   0.00133     0.785
+
+
+Intercept <- coefs %>%
+  filter(term == "(Intercept)") %>%
+  pull(estimate)
+
+```
+
+## 5.4 Tidying our model and ROC / AUC metrics
+
+We inner join the test data - select only the test data and then
+inner join the coeffs data by joining on the word column in the
+test data to the term column from the coefs data frame.
+
+We use the `plogis` function to score the test data. The funciton plogis gives the distribution function
+
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+classifications <- tidy_books %>%
+  inner_join(test_data) %>%
+  inner_join(coefs, by = c("word" = "term")) %>%
+  group_by(document) %>%
+  summarize(score = sum(estimate)) %>%
+  mutate(probability = plogis(Intercept + score))
+glimpse(classifications)
+
+# Understanding our model - 
+
+coefs %>%
+  group_by(estimate > 0) %>%
+  top_n(10, abs(estimate)) %>%
+  ungroup %>%
+  ggplot(aes(fct_reorder(term, estimate), 
+             estimate, 
+             fill = estimate > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() + 
+  labs(x = NULL,
+       title = "Coefficients that increase/decrease probability the most",
+       subtitle = "A document mentioning Martians is unlikely to be written by Jane Austen"
+  )
+```
+
+Calculating the ROC and AUC (Area under the curve). We use the package `yardstick` to 
+create the ROC and AUC curve
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+comment_classes <- classifications %>%
+  left_join(books %>%
+              select(title, document), by = "document") %>%
+  mutate(title = as.factor(title))
+comment_classes
+glimpse(comment_classes)
+# A tibble: 3,993 x 4
+# document  score probability title                
+# <int>  <dbl>       <dbl> <fct>                
+# 1        8 -1.62       0.202  The War of the Worlds
+# 2        9 -0.467      0.444  The War of the Worlds
+# 3       19  0.421      0.660  The War of the Worlds
+# 4       24 -0.442      0.451  The War of the Worlds
+# 5       27 -0.550      0.424  The War of the Worlds
+# 6       42 -2.91       0.0648 The War of the Worlds
+# 7       47 -0.938      0.333  The War of the Worlds
+# 8       52 -1.13       0.293  The War of the Worlds
+# 9       56 -0.445      0.450  The War of the Worlds
+# 10       64 -2.14       0.131  The War of the Worlds
+# # … with 3,983 more rows
+
+library(yardstick)
+comment_classes %>%
+  roc_curve(title, probability) %>%
+  ggplot(aes(x = 1 - specificity, y = sensitivity)) +
+  geom_line(size = 1.5) +
+  geom_abline(
+    lty = 2, alpha = 0.5,
+    color = "gray50",
+    size = 1.2
+  )
+
+comment_classes %>%
+  roc_auc(title, probability)
+
+comment_classes %>%
+  mutate(
+    prediction = case_when(
+      probability > 0.5 ~ "Pride and Prejudice",
+      TRUE ~ "The War of the Worlds"
+    ),
+    prediction = as.factor(prediction)
+  ) %>%
+  conf_mat(title, prediction)
+```
+
+## 5.5 Misclassifications
+
+Which documents here were incorrectly predicted to be written by Jane Austen?
+
+```{r , echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+comment_classes %>%
+  filter(probability > .8, title == "The War of the Worlds") %>%
+  sample_n(5) %>%
+  inner_join(books %>%
+               select(document, text)) %>%
+  select(probability, text)
+
+comment_classes %>%
+  filter(probability < .3, title == "Pride and Prejudice" ) %>%
+  sample_n(5) %>%
+  inner_join(books %>%
+               select(document, text)) %>%
+  select(probability, text)
+```
+

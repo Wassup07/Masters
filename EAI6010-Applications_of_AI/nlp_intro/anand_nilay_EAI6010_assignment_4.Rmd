@@ -1,0 +1,338 @@
+---
+title: "EAI6010 Assignment 4"
+author: "Nilay Anand"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+```{r setup, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#Invoke the required library packages
+library(ggplot2)
+library(tidytext)
+library(tidyverse)
+library(stm)
+library(topicmodels)
+library(stringr)
+library(janitor)
+library(tidytext)
+library(gutenbergr)
+library(scales)
+```
+
+### Extract the full dataset for all four books together
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(gutenbergr)
+library(tidyverse)
+all_books_df <- gutenberg_download(c(219,844,43,4300),
+                                  mirror="http://mirrors.xmission.com/gutenberg/")
+```
+
+### Tokenize the dataset of all four books together using the unnest_tokens command and create a tidy dataset
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(tidytext)
+all_tokens <- all_books_df  %>% 
+  mutate(line = row_number()) %>% 
+  unnest_tokens(word, text)
+all_tokens %>% count(word, sort = TRUE)
+```
+
+### Remove the stop words
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+all_tidybook <- all_tokens %>%  anti_join(get_stopwords(source = "smart"),by = "word")
+all_tidybook %>% count(word, sort = TRUE)
+```
+
+### Plot the top 20 common words in the collection of books
+
+```{r, comment = NA, tidy = T,echo=FALSE, message=FALSE, warning=FALSE, tidy.opts=list(width.cutoff=60)}
+all_tidybook %>% count(word, sort = TRUE) %>%
+  top_n(20) %>%
+  ggplot(aes(fct_reorder(word, n), n)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "Word \n",y = "\n Count", title = "Top 20 common words") +
+  theme(plot.title = element_text(hjust =0.5),
+        axis.title.x = element_text(),
+        axis.title.y = element_text())
+```
+
+# Analysis of each book seperately
+
+### Tokenize each book and create tidy datasets making sure that you use stop words
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(gutenbergr)
+library(dplyr)
+library(tidytext)
+
+heartofdark_tidy <- gutenberg_download(219, mirror="http://mirrors.xmission.com/gutenberg/") %>% 
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+heartofdark_tidy %>% count(word,sort = TRUE)
+
+earnest_tidy <- gutenberg_download(844,mirror="http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+earnest_tidy %>% count(word,sort = TRUE)
+
+jekyllandhyde_tidy <- gutenberg_download(43,mirror="http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+jekyllandhyde_tidy %>% count(word,sort = TRUE)
+
+ulysses_tidy <- gutenberg_download(4300,mirror="http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+ulysses_tidy %>% count(word,sort = TRUE)
+```
+
+### Create tidy data sets for each book by author making sure that you use the unnest_tokens command and stop words
+
+##### Extract IDs for books by each author
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+#Works by Joseph Conrad(Heart of Darkness)
+gutenberg_conrad <- gutenberg_works(author == "Conrad, Joseph")
+conrad_id <- subset(gutenberg_conrad, select = c("gutenberg_id"))
+print(conrad_id)
+
+#Works by oscar Wild
+gutenberg_wilde <- gutenberg_works(author == "Wilde, Oscar")
+wilde_id <- subset(gutenberg_wilde, select = c("gutenberg_id"))
+print(wilde_id)
+
+#Works by Robert Louis Stevenson
+gutenberg_louis_stevenson <- gutenberg_works(author == "Stevenson, Robert Louis")
+louis_stevenson_id <- subset(gutenberg_louis_stevenson, select = c("gutenberg_id"))
+print(louis_stevenson_id)
+
+#Works by James Joyce
+gutenberg_Joyce <- gutenberg_works(author == "Joyce, James")
+joyce_id <- subset(gutenberg_Joyce, select = c("gutenberg_id"))
+print(joyce_id)
+```
+
+##### Creating tidy data frames for each author
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+joseph_conrad <- gutenberg_download(conrad_id$gutenberg_id,
+                                    mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_joseph_conrad <- joseph_conrad %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+tidy_joseph_conrad %>% 
+  count(word, sort = TRUE)
+
+oscar_Wild <- gutenberg_download(wilde_id$gutenberg_id,
+                                 mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_oscar_wilde <- oscar_Wild %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+tidy_oscar_wilde %>% 
+  count(word, sort = TRUE)
+
+louis_stevenson <- gutenberg_download(louis_stevenson_id$gutenberg_id,
+                                      mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_louis_stevenson <- louis_stevenson %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+tidy_louis_stevenson %>% 
+  count(word, sort = TRUE)
+
+james_joyce <- gutenberg_download(joyce_id$gutenberg_id,
+                                  mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_james_joyce <- james_joyce %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")
+tidy_james_joyce %>% 
+  count(word, sort = TRUE)
+```
+
+### Use bind_rows to stack the four datasets and create frequency counts of the word distributions after calculating proportions.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60), message=FALSE, warning=FALSE }
+author_bind <- bind_rows(mutate(tidy_joseph_conrad, author = "Joseph Conrad"),
+                       mutate(tidy_oscar_wilde, author = "Oscar Wilde"),
+                       mutate(tidy_louis_stevenson, author = "Robert Louis Stevenson"),
+                       mutate(tidy_james_joyce, author = "James Joyce"))
+
+frequency <- author_bind %>%
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>%
+  select(-n) %>%                          #Drop n
+  spread(author, proportion) %>%          #Reshape long dataset into wide
+  gather(author, proportion, `Joseph Conrad`:`Oscar Wilde`:`Robert Louis Stevenson`)
+
+names(frequency)
+tabyl(frequency$author)
+head(frequency)
+```
+
+### Create word frequency plots for each of the three authors using James Joyce as the standard as we demonstrated using Jane Austen in the Chapter 1 code
+
+```{r, echo = FALSE, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60),message=FALSE, warning=FALSE}
+library(scales)
+
+# expect a warning about rows with missing values being removed
+ggplot(frequency, aes(x = proportion, y = `James Joyce`, 
+                      color = abs(`James Joyce` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "James Joyce", x = NULL)
+```
+
+### Compute correlations between James Joyce against each of the three other authors. Use the code examples in Chapter 1.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+cor.test(data = frequency[frequency$author == "Joseph Conrad",],
+         ~ proportion + `James Joyce`)
+
+cor.test(data = frequency[frequency$author == "Oscar Wilde",], 
+         ~ proportion + `James Joyce`)
+
+cor.test(data = frequency[frequency$author == "Robert Louis Stevenson",], 
+         ~ proportion + `James Joyce`)
+```
+
+### Do a sentiment analysis of the positive and negative words using the tidy dataset from James Joyce
+
+##### Build AFINN and combined Bing and nrc sentiment analysis methods using inner join, binding them together and visualizing using ggplot
+
+
+```{r, echo = FALSE, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+afinn <- tidy_james_joyce %>% 
+  inner_join(get_sentiments("afinn"),by = "word") %>% 
+  group_by(index = line %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(
+  tidy_james_joyce %>% 
+    inner_join(get_sentiments("bing"),by = "word") %>%
+    mutate(method = "Bing et al."),
+  tidy_james_joyce %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative")),by = "word"
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index = line %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+#Binding them together
+bind_sent_rows <- bind_rows(afinn, 
+          bing_and_nrc)
+
+#Visualize sentiment using ggplot
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+```
+
+The plots for all three approaches are comparable, with NRC having the largest positive skew. AFINN and Bing are nearly identical in their ability to distinguish between positive and negative words, while Bing has more negative spikes and longer continuous positive and negative word lengths.
+
+The most positive emotion is shown by NRC, while the highest negative sentiment is shown by AFINN.
+
+In NRC and Bing, we'll examine at the contribution of positive and negative words because they have the most volatility.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment)
+
+get_sentiments("bing") %>% 
+  count(sentiment)
+```
+Negative terms are more common than positive ones in both cases, but the ratio of negative to positive words is larger in Bing, which makes sense given the plots we observed.
+
+Finally, checking the most common positive and negative words
+
+```{r, echo = FALSE, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60),message=FALSE, warning=FALSE}
+
+bing_word_counts <- tidy_james_joyce %>%
+  inner_join(get_sentiments("bing"),by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+# Analysis on combined tidy dataset
+
+### Calculate the tf_idf for all the tokens in the combined dataset. Use the bind_tf-idf function. Use the code in Chapter 3.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+#Taking combined tidy data set of all books created in the beginning; all_tidybook
+#Adding title column to tidy data
+level_key <- c(`219` = "Heart of Darkness", `844` = "Importance of Being Earnest", 
+               `43` = "Dr. Jekyll and Mr. Hyde", `4300` = "Ulysses")
+all_tidybook <- all_tidybook %>% 
+  mutate(title = recode(gutenberg_id, !!!level_key)) %>%
+  subset(select=c(1,4,2,3))
+
+#Calculate tf_idf for all books
+all_book_tf_idf <- all_tidybook %>%
+  count(title, word, sort = TRUE) %>%
+  bind_tf_idf(word, title, n)
+
+all_book_tf_idf
+```
+
+### Show the top 10 words which have the highest tf_idf for all books
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+head(all_book_tf_idf %>% arrange(desc(tf_idf)),10)
+```
+
+### Plot the tf_idf for each book separately using the combined dataset as column plots. Use the group_by(title)….and the fact_reorder and geom_col syntax for the ggplots. 
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+all_book_tf_idf %>%
+  group_by(title) %>%
+  slice_max(tf_idf, n = 15) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = title)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~title, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+

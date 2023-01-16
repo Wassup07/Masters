@@ -1,0 +1,262 @@
+---
+title: "Text Mining using tidytext - Chapter 1"
+author: "Abhijit Sanyal"
+output:
+  pdf_document: default
+  html_document: default
+  date: !r Sys.Date()
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = FALSE)
+#Invoke the required library packages
+library(ggplot2)
+library(tidytext)
+library(tidyverse)
+library(stm)
+library(topicmodels)
+library(stringr)
+library(gutenbergr)
+library(janitor)
+library(wordcloud)
+library(tidytext)
+library(gutenbergr)
+library(janeaustenr)
+```
+
+# Text Analytics
+
+# Chapter 1 
+## 1.1 Introduction
+
+Tidy data has a specific structure:
+
+1. Each variable is a column
+2. Each observation is a row
+3. Each type of observational unit is a table
+
+The tidy text format is a table with one-token-per-row.
+A token is a meaningful unit of text, such as a word, that we are interested in using for analysis
+Tokenization is the process of splitting text into tokens. 
+This one-token-per-row structure is in contrast to the ways text is often stored in current analyses, perhaps as strings or in a document-term matrix. 
+For tidy text mining:
+
+1. The token that is stored in each row is most often a single word, 
+2. It can also be an n-gram, sentence, or paragraph. 
+3. The tidytext package provides functionality to tokenize by commonly used units of text like these and converted to a one-term-per-row format.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(tidyverse)
+
+text <- c("Because I could not stop for Death -",
+          "He kindly stopped for me -",
+          "The Carriage held but just Ourselves -",
+          "and Immortality")
+
+text
+# Store the text as a tibble
+text_df <- tibble(line = 1:4, text = text)
+text_df
+```
+
+A tibble is a class of dataframes within R that has convenient print method and will not convert strings into factors and does not use row names. Tibbles work weel with the tools in tidyverse.
+
+Tidytext package includes functions to tidy() objects and can work with data from other popular text mining packages such as `tm` (Feinerer, Hornok and Meyer) and `quanteda` (Benoit and Nulty, 2016)
+
+The tidy text format is defined as being a table with one-token-per-row. Structuring text data in this way means that it conforms to tidy data principles and can be manipulated with a set of consistent tools such dplyr and broom. 
+
+Text data can also be stored in these alternative ways:
+
+1. String: Text can, of course, be stored as strings, i.e., character vectors, within R, and often text data is first read into memory in this form.
+2. Corpus: These types of objects typically contain raw strings annotated with additional metadata and details.
+3. Document-term matrix: This is a sparse matrix describing a collection (i.e., a corpus) of documents with one row for each document and one column for each term. The value in the matrix is typically word count or tf-idf (term frequency - inverse document frequency).
+
+We need to break down the text into individual tokens which is a process called tokenization and transform it into a tidy data structure. A token is the most basic meaningful unit of text and tokenization is the process of splitting text data into tokens. To do this we use the `unnest_tokens` function from tidytext which has two basic arguments which has two column names. The first is the output column name - word where the test is unnested and the input column that the text comes from which is the line number. Punctuation has been stripped and by default the function unnest_tokens converts the token into lower case. 
+
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(tidytext)
+
+text_df %>%
+  unnest_tokens(word, text)
+```
+
+## 1.2 Tidying Pride and Prejudice
+
+The gutenbergr package provides access to the public domain works from the Project Gutenberg collection. The package includes tools both for downloading books (stripping out the unhelpful header/footer information), and a complete dataset of Project Gutenberg metadata that can be used to find works of interest. For this project, we will mostly use the function `gutenberg_download()` that downloads one or more works from Project Gutenberg by ID. This package provides these texts in a one row per line format, where a line is similar to a printed line in physical book.The package's documentation is available at `rOpenSci`.
+
+Jane Austen, the British author published 6 completed novels and they are available in the `gutenbergr` package.  We will look at one of them - Pride and Prejudice' which is identified by the ID = 1342.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(gutenbergr)
+full_text <- gutenberg_download(1342, mirror ="http://mirrors.xmission.com/gutenberg/")
+head(full_text)
+class(full_text)
+dim(full_text)
+tidy_book <- full_text %>%
+  mutate(line = row_number()) %>%
+  unnest_tokens(word, text)
+glimpse(tidy_book)
+count_tidy_book <- tidy_book %>%
+  count(word, sort = TRUE)
+head(count_tidy_book)
+
+```
+
+In text analysis, we will want to remove stop words. Stop words are words that are usually 
+common words that are not useful for an analysis. These are some prepositions and articles, typically words such as "the", "of", "to" and so forth in English. There are stop word dictionaries available for other languages such as Spanish and Portugese. We can remove the stop words from our data set with an anti-join. The code below computes the anti-join with the stop-words dictionary and then plots the top 20 common words in the book "Pride and Prejudice".
+
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+get_stopwords()
+get_stopwords(language = "es")
+get_stopwords(language = "pt")
+get_stopwords(source = "smart")
+
+tidy_book %>%
+  anti_join(get_stopwords(source = "smart")) %>%
+  count(word, sort = TRUE) %>%
+  top_n(20) %>%
+  ggplot(aes(fct_reorder(word, n), n)) +
+  geom_col() +
+  coord_flip()
+
+```
+
+## 1.3 Word Frequencies
+
+Here is some code that will allow you to search for the id numbers of authors that you want to work with. This exercise is used to extract the ids' of the works of Jane Austen which is subsequently used for analysis 
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+gutenberg_metadata
+
+gutenberg_metadata %>%
+  count(author, sort = TRUE)
+
+# look for Shakespeare, excluding collections (containing "Works") and translations
+shakespeare_metadata <- gutenberg_metadata %>%
+  filter(author == "Shakespeare, William",
+         language == "en",
+         !str_detect(title, "Works"),
+         has_text,
+         !str_detect(rights, "Copyright")) %>%
+  distinct(title)
+
+# look for Jane Austen, excluding collections (containing "Emma") and translations
+austen_metadata <- gutenberg_metadata %>%
+  filter(author == "Austen, Jane",
+         language == "en",
+         !str_detect(title, "Emma"),
+         has_text,
+         !str_detect(rights, "Copyright")) %>%
+  distinct(title)
+
+#Search and extract the ids for the works by Jane_Austen
+gutenberg_Austen <- gutenberg_works(author == "Austen, Jane")
+Austen_id <- subset(gutenberg_Austen, select = c("gutenberg_id"))
+print(Austen_id)
+                    
+```
+
+
+## 1.4 Frequency Distributions and Correlations
+
+A preliminary task in text analysis is computing word frequencies for a corpus of text and then comparing them across similar bodies of text. We will extract two sets of texts here 
+and compare the common words across them The two authors we will use are H.G.Wells and the Bronte sisters. For H.G.Wells we will get "The Time Machine", "The War of the Worlds", "The Invisible Man", and "The Island of Doctor Moreau". We can access these works using gutenberg_download(TextID, mirror ="http://mirrors.xmission.com/gutenberg/") and the Project Gutenberg ID numbers for each novel. For the Bronte sisters we will get "Jane Eyre", "Wuthering Heights", "The Tenant of Wildfell Hall", "Villette", and "Agnes Grey". We will again use the Project Gutenberg ID numbers for each novel and access the texts using gutenberg_download(<TextID>, mirror ="http://mirrors.xmission.com/gutenberg/").
+
+The code below uses str_extract() because the UTF-8 encoded texts from Project Gutenberg have some #examples of words with underscores around them to indicate emphasis (like italics). The #tokenizer treated these as words, but we do not want to count “_any_” separately from “any” as we saw in our initial data exploration before choosing to use str_extract()
+
+The end goal is to create a data set that will allow plotting of the frequency distribution of the two authors - H.G.Wells and the Bronte siters against the works of Jane Austen using dplyr verbs for data manipulation.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+jane_austen <- gutenberg_download(c(161,1342,141,158,121,105),mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_jane_austen <- jane_austen %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_jane_austen %>% 
+  count(word, sort = TRUE)
+
+
+hgwells <- gutenberg_download(c(35, 36, 5230, 159), mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_hgwells <- hgwells %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_hgwells %>% 
+  count(word, sort = TRUE)
+
+bronte <- gutenberg_download(c(1260, 768, 969, 9182, 767), mirror ="http://mirrors.xmission.com/gutenberg/")
+tidy_bronte <- bronte %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_bronte %>%
+  count(word, sort = TRUE)
+
+
+frequency <- bind_rows(mutate(tidy_bronte, author = "Brontë Sisters"),
+                       mutate(tidy_hgwells, author = "H.G. Wells"),
+                       mutate(tidy_jane_austen, author = "Jane Austen")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>%     
+  select(-n) %>%                          #Drop n
+  spread(author, proportion) %>%          #Reshape long dataset into wide
+  gather(author, proportion, `Brontë Sisters`:`H.G. Wells`)     #
+
+class(frequency)
+dim(frequency)
+names(frequency)
+tabyl(frequency$author)
+head(frequency)
+```
+
+
+
+We use ggplot below to create a plot of frequency distributions of the same words by the two authors and compare it to the words used by Jane Austen.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(scales)
+
+# expect a warning about rows with missing values being removed
+ggplot(frequency, aes(x = proportion, y = `Jane Austen`, 
+                      color = abs(`Jane Austen` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Jane Austen", x = NULL)
+```
+
+Words that are close to the line in these plots have similar frequencies in both sets of texts, for example, in both Austen and Brontë texts (“miss”, “time”, “day” at the upper frequency end) or in both Austen and Wells texts (“time”, “day”, “brother” at the high frequency end). Words that are far from the line are words that are found more in one set of texts than another. 
+
+For example, in the Austen-Brontë panel, words like “elizabeth”, “emma”, and “fanny” (all proper nouns) are found in Austen’s texts but not much in the Brontë texts, while words like “arthur” and “dog” are found in the Brontë texts but not the Austen texts. In comparing H.G. Wells with Jane Austen, Wells uses words like “beast”, “guns”, “feet”, and “black” that Austen does not, while Austen uses words like “family”, “friend”, “letter”, and “dear” that Wells does not.
+
+Overall, notice in the above figure that the words in the Austen-Brontë panel are closer to the zero-slope line than in the Austen-Wells panel. Also notice that the words extend to lower frequencies in the Austen-Brontë panel; there is empty space in the Austen-Wells panel at low frequency. These characteristics indicate that Austen and the Brontë sisters use more similar words than Austen and H.G. Wells. Also, we see that not all the words are found in all three sets of texts and there are fewer data points in the panel for Austen and H.G. Wells.
+
+Let us quantify how similar and different these sets of word frequencies are using a correlation test. How correlated are the word frequencies between Austen and the Brontë sisters, and between Austen and Wells?
+The findings validate our prior hypotheses:
+
+* There is a higher correlation between the works of Jane Austen and the Bronte sisters
+* There is a lower correlation between the works of Jane Austen and H.G. Wells.
+
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+cor.test(data = frequency[frequency$author == "Brontë Sisters",],
+         ~ proportion + `Jane Austen`)
+
+cor.test(data = frequency[frequency$author == "H.G. Wells",], 
+         ~ proportion + `Jane Austen`)
+
+```

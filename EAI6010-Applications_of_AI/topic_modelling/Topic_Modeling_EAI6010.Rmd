@@ -1,0 +1,236 @@
+---
+title: "EAI6010 Final Assignment - Topic Modelling"
+author: "Nilay Anand"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r, echo = T, message = FALSE, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60),warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#Invoke the required library packages
+library(ggplot2)
+library(tidytext)
+library(tidyverse)
+library(stm)
+library(topicmodels)
+library(stringr)
+library(gutenbergr)
+library(janitor)
+library(glmnet)
+library(tm)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(furrr)
+```
+
+### Extract the full dataset for all three books together
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+ttluts <- c("Twenty Thousand Leagues under the Sea")
+ttluts_df <- gutenberg_works(title %in% ttluts) %>% 
+  gutenberg_download(meta_fields = "title", mirror = "http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(document = row_number())
+
+wh <- c("Wuthering Heights")
+wh_df <- gutenberg_works(title %in% wh) %>% 
+  gutenberg_download(meta_fields = "title", mirror = "http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(document = row_number())
+
+wow <- c("The War of the Worlds")
+wow_df <- gutenberg_works(title %in% wow) %>% 
+  gutenberg_download(meta_fields = "title", mirror = "http://mirrors.xmission.com/gutenberg/") %>%
+  mutate(document = row_number())
+```
+
+### Divide into documents, each representing one chapter
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+by_chapter_ttluts_df <- ttluts_df %>%
+  group_by(title) %>%
+  mutate(chapter = cumsum(str_detect(text, regex("^chapter ",  
+                                                 ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, title, chapter)
+
+by_chapter_wh_df <- wh_df %>%
+  group_by(title) %>%
+  mutate(chapter = cumsum(str_detect(text, regex("^chapter ",  
+                                                 ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, title, chapter)
+
+by_chapter_wow_df <- wow_df %>%
+  group_by(title) %>%
+  mutate(chapter = cumsum(str_detect(text, regex("^(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})(.)$", 
+                                                 ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, title, chapter)
+
+by_chapter_df <- bind_rows(by_chapter_ttluts_df,
+                           by_chapter_wh_df,
+                           by_chapter_wow_df)
+
+
+```
+
+### Tokenize the dataset of all four books together using the unnest_tokens command
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+# Split into words
+by_chapter_word_df <- by_chapter_df %>%
+  unnest_tokens(word, text)
+
+dim(by_chapter_word_df)
+```
+
+### Determine the document word counts
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+word_counts_df <- by_chapter_word_df %>%
+  anti_join(get_stopwords()) %>%
+  count(document, word, sort = TRUE) %>%
+  ungroup()
+
+glimpse(word_counts_df)
+
+```
+
+# The next set of analysis you have to create a topic model using the LDA approach and package
+
+### Create the document term matrix (DTM)
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+chapters_dtm <- word_counts_df %>%
+  cast_dtm(document, word, n)
+
+chapters_dtm
+```
+
+### Use LDA to create a 3-topic model
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+
+chapters_lda <- LDA(chapters_dtm, k = 3, control = list(seed = 1234))
+chapters_lda
+
+```
+```{r,  echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+chapter_topics <- tidy(chapters_lda, matrix = "beta")
+chapter_topics
+```
+
+### Use dplyr’s top_n() or slice_max( ) function to find the top 5 terms within each topic and subsequently use ggplot2 to do a visualization.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+top_terms <- chapter_topics %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+```
+
+### Determine which topics are closest in their association with each document using the “gamma” parameter
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+chapters_gamma <- tidy(chapters_lda, matrix = "gamma")
+chapters_gamma
+
+dim(chapters_gamma)
+
+```
+
+### Separate the document name into title and chapter using the separate function and ggplot2 to visualize the per-document-per-topic probability for each topic.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+chapters_gamma <- chapters_gamma %>%
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE)
+
+chapters_gamma
+
+chapters_gamma %>%
+  mutate(title = reorder(title, gamma * topic)) %>%
+  ggplot(aes(factor(topic), gamma)) +
+  geom_boxplot() +
+  facet_wrap(~ title) +
+  labs(x = "topic", y = expression(gamma))
+```
+
+### Take the chapters_gamma dataframe and group it by title and chapter and then use the slice_max function selects the rows with the highest values of the gamma variable.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+chapter_classifications <- chapters_gamma %>%
+  group_by(title, chapter) %>%
+  slice_max(gamma) %>%
+  ungroup()
+
+chapter_classifications
+```
+
+### Develop the “consensus” topic for each book
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+book_topics <- chapter_classifications %>%
+  count(title, topic) %>%
+  group_by(title) %>%
+  top_n(1, n) %>%
+  ungroup() %>%
+  transmute(consensus = title, topic)
+
+book_topics
+
+chapter_classifications %>%
+  inner_join(book_topics, by = "topic") %>%
+  filter(title != consensus)
+```
+
+### Use the augment function to develop the words assignment for each topic
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+assignments <- augment(chapters_lda, data = chapters_dtm)
+assignments
+
+assignments <- assignments %>%
+  separate(document, c("title", "chapter"), 
+           sep = "_", convert = TRUE) %>%
+  inner_join(book_topics, by = c(".topic" = "topic"))
+
+assignments
+```
+
+### Develop the confusion matrix for all the topics
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(scales)
+
+assignments %>%
+  count(title, consensus, wt = count) %>%
+  mutate(across(c(title, consensus), ~str_wrap(., 20))) %>%
+  group_by(title) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, title, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "darkred", label = percent_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Book words were assigned to",
+       y = "Book words came from",
+       fill = "% of assignments")
+```

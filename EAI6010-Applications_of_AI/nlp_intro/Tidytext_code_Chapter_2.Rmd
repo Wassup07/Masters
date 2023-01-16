@@ -1,0 +1,289 @@
+---
+title: "Text Mining using tidytext - Chapter 2"
+author: "Abhijit Sanyal"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+#Invoke the required library packages
+library(ggplot2)
+library(tidytext)
+library(tidyverse)
+library(stm)
+library(topicmodels)
+library(stringr)
+library(gutenbergr)
+library(janitor)
+library(wordcloud)
+```
+
+# Text Analytics
+
+# Chapter 2 
+## 2.1 - Overview
+
+What we have examined so far:
+
+* Understand the tidytext format and how it can be used to address questions on word frequency
+* This allowed us to examine which words are used most frequently and to compare documents in terms of their word frequency usage
+
+In this chapter we will address the topic of sentiment analysis or opinion mining. When we read a book, poem or any written materials we are able to assess the emotional intent of the text as positive or negative about the subject of interest or expressing happines, disgust or anguish. There is a whole range of emotions that can be associated with written or spoken matter and subsequently analysed as long as it digitally captured or transferred.
+
+The simplest approach is to to assess the sentiment of individual words that comprise the text and evaluate the sentiment content of the whole text as the sum of the sentiment of the individual words.There are approaches to analyse sentiment in NLP but this is the approach that we are going to learn about it today.
+
+## 2.2 Sentiment Datasets
+
+To attribute a word with positive or negative sentiment, we need to have access to a pre-built sentiment lexicon or dataset that is a list of most words in the English language with positive or negative associations. There are three general purpose lexicons that are currently available in the tidytext package
+
+* AFINN from Finn Årup Nielsen,
+* bing from Bing Liu and collaborators, and
+* nrc from Saif Mohammad and Peter Turney.
+
+All of the above lexicons are based on single words or unigrams. These lexicons contain many English words and the words are assigned scores for positive/negative sentiment, and also possibly emotions like joy, anger, sadness, and so forth. 
+
+* The nrc lexicon categorizes words in a binary fashion (“yes”/“no”) into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust. 
+
+* The bing lexicon categorizes words in a binary fashion into positive and negative categories. 
+
+* The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+These sentiment lexicons were constructed either via crowdsourcing and validated through a combination of crowdsourcing, individual surveys, inedependent raters etc.,  There is the obvious situation when you may be applying a modern sentiment lexicon that may be inappropriate for the text being analyzed written 200 years ago. Languages are "living" entities and the words and their usage are subject to constant change.
+
+Sentiment lexicons can also be domain specific as for example in the areas of finance, healthcare or politics.
+
+Most words in English are fairly neutral. The methods illustrated here do not take into account qualifiers before a word such as "not bad" or "not true" and is based on unigrams only. 
+
+The function get_sentiments() provides access to specific sentiment lexicons.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+get_sentiments("afinn")
+get_sentiments("bing")
+get_sentiments("nrc")
+
+
+```
+
+## 2.3 Sentiment Analysis with inner join
+
+We shall first look at words with a joy score from the NRC lexicon. We will try to answer the following question - "What are the most common words in Emma"?
+
+We take the text and convert the text to the tidy format using unnest_tokens(), just as we did earlier. We also have to set up columns to keep track of which line and chapter of the book each word comes from for which we use group_by and mutate to construct those columns. There is also the usage of the `str_detect` fucntion from the `stringr` package and the regex (regular expression) function. We are also using the name `word` for the output column from unnest_tokens(). This is done for convenience because the sentiment lexicons and stop word datasets have columns named `word` and performing inner joins and anti-joins is thus easier.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+
+tidy_books <- austen_books() %>%
+  dplyr::group_by(book) %>%
+  dplyr::mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]", 
+                                      ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  unnest_tokens(word, text)
+head(tidy_books)
+tabyl(tidy_books$book)
+```
+
+We will then `filter()` the data frame `tidy_books` for the words from Emma and then use inner_join to perform the sentiment analysis. We will then use the function count from the package `dplyr` to determine what are the most common joy words.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+nrc_joy <- get_sentiments("nrc") %>% 
+  filter(sentiment == "joy")
+
+tidy_books %>%
+  filter(book == "Emma") %>%
+  inner_join(nrc_joy) %>%
+  count(word, sort = TRUE)
+```
+We can also examine how sentiment changes throughout each novel. We can do this with just a handful of lines that are mostly dplyr functions. First, we find a sentiment score for each word using the Bing lexicon and inner_join().
+
+Next, we count up how many positive and negative words there are in defined sections of each book. We define an index here to keep track of where we are in the narrative; this index (using integer division) counts up sections of 80 lines of text.
+
+The %/% operator does integer division (x %/% y is equivalent to floor(x/y)) so the index keeps track of which 80-line section of text we are counting up negative and positive sentiment in.
+
+Small sections of text may not have enough words in them to get a good estimate of sentiment while really large sections can wash out narrative structure. For these books, using 80 lines works well, but this can vary depending on individual texts, how long the lines were to start with, etc. We then use spread() which changes the data frame from narrow to wide, so that we have negative and positive sentiments in separate columns, and lastly calculate net sentiment based on "positive - negative".
+
+We will then use ggplot2 to visualize this sentiment or plot trajectory across the book.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(tidyr)
+
+jane_austen_sentiment <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(book, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+head(jane_austen_sentiment)
+
+library(ggplot2)
+
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x")
+```
+
+
+## 2.4 Sentiment Analysis with inner join
+
+Since we have several options for sentiment lexicons, we might want some more information on which one is appropriate for your purposes. Let us use all three sentiment lexicons and examine how the sentiment changes across the narrative arc of Pride and Prejudice. First, let us filter() to choose only the words from the one novel we are interested in which fro this exercise is "Pride and Prejudice".
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+pride_prejudice <- tidy_books %>% 
+  filter(book == "Pride & Prejudice")
+
+pride_prejudice
+#> # A tibble: 122,204 x 4
+#>    book              linenumber chapter word     
+#>    <fct>                  <int>   <int> <chr>    
+#>  1 Pride & Prejudice          1       0 pride    
+#>  2 Pride & Prejudice          1       0 and      
+#>  3 Pride & Prejudice          1       0 prejudice
+#>  4 Pride & Prejudice          3       0 by       
+#>  5 Pride & Prejudice          3       0 jane     
+#>  6 Pride & Prejudice          3       0 austen   
+#>  7 Pride & Prejudice          7       1 chapter  
+#>  8 Pride & Prejudice          7       1 1        
+#>  9 Pride & Prejudice         10       1 it       
+#> 10 Pride & Prejudice         10       1 is       
+#> # … with 122,194 more rows
+```
+
+Now, we can use inner_join() to calculate the sentiment in different ways.
+You may remember that the AFINN lexicon measures sentiment with a numeric score between -5 and 5, while the other two lexicons categorize words in a binary fashion, either positive or negative. To find a sentiment score in chunks of text throughout the novel, we will need to use a different pattern for the AFINN lexicon than for the other two.
+
+We will again use integer division (%/%) to define larger sections of text that span multiple lines, and we can use the same pattern with count(), spread(), and mutate() to find the net sentiment in each of these sections of text.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+afinn <- pride_prejudice %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(
+  pride_prejudice %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  pride_prejudice %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+```
+
+We now have an estimate of the net sentiment (positive - negative) in each chunk of the novel text for each sentiment lexicon. Let’s bind them together and visualize them using ggplot2.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+bind_sent_rows <- bind_rows(afinn, 
+          bing_and_nrc)
+head(bind_sent_rows)
+tail(bind_sent_rows)
+
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+
+The three different lexicons for calculating sentiment give results that are different in an absolute sense but have similar relative trajectories through the novel. We see similar dips and peaks in sentiment at about the same places in the novel, but the absolute values are significantly different. 
+
+The AFINN lexicon gives the largest absolute values, with high positive values. The lexicon from Bing et al. has lower absolute values and seems to label larger blocks of contiguous positive or negative text. 
+
+The NRC results are shifted higher relative to the other two, labeling the text more positively, but detects similar relative changes in the text. We find similar differences between the methods when looking at other novels; the NRC sentiment is high, the AFINN sentiment has more variance, the Bing et al. sentiment appears to find longer stretches of similar text, but all three agree roughly on the overall trends in the sentiment through a narrative arc.
+
+Why is, for example, the result for the NRC lexicon biased so high in sentiment compared to the Bing et al. result? Let’s look briefly at how many positive and negative words are in these lexicons.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment)
+
+get_sentiments("bing") %>% 
+  count(sentiment)
+#> # A tibble: 2 x 2
+#>   sentiment     n
+#>   <chr>     <int>
+#> 1 negative   4781
+#> 2 positive   2005
+```
+
+Both lexicons have more negative than positive words, but the ratio of negative to positive words is higher in the Bing lexicon than the NRC lexicon. This will contribute to the effect we see in the plot above, as will any systematic difference in word matches, e.g. if the negative words in the NRC lexicon do not match the words that Jane Austen uses.
+
+## 2.5 Most common positive and negative words
+
+One advantage of having the data frame with both sentiment and word is that we can analyze word counts that contribute to each sentiment. By implementing count() here with arguments of both word and sentiment, we find out how much each word contributed to each sentiment.
+To visualize the results we pipe the results into ggplot2.
+
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts
+#> # A tibble: 2,585 x 3
+#>    word     sentiment     n
+#>    <chr>    <chr>     <int>
+#>  1 miss     negative   1855
+#>  2 well     positive   1523
+#>  3 good     positive   1380
+#>  4 great    positive    981
+#>  5 like     positive    725
+#>  6 better   positive    639
+#>  7 enough   positive    613
+#>  8 happy    positive    534
+#>  9 love     positive    495
+#> 10 pleasure positive    462
+#> # … with 2,575 more rows
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+
+## 2.6 Wordclouds
+
+Let us look at the most common words in Jane Austen;s work using wordclouds.
+
+We can also use sentiment analysis to tag positive and negative words using an inner join, then find the most common positive and negative words.
+
+```{r, echo = T, comment = NA, tidy = T, tidy.opts=list(width.cutoff=60)}
+library(wordcloud)
+
+tidy_books %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+
+library(reshape2)
+
+tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+
+```
+
